@@ -1,0 +1,183 @@
+---
+# ============================================================
+# Kubernetes manifests for Eureka Discovery Server
+# Deploys a 2-replica StatefulSet behind a headless Service
+# for proper peer-to-peer DNS resolution.
+#
+# Apply with:
+#   kubectl apply -f k8s/
+# ============================================================
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: infrastructure
+
+---
+# Secret — store credentials in a K8s Secret (or use Vault / AWS Secrets Manager)
+# In production: never hardcode these values; populate via external secret operator
+apiVersion: v1
+kind: Secret
+metadata:
+  name: eureka-credentials
+  namespace: infrastructure
+type: Opaque
+stringData:
+  username: eureka-admin           # ← replace with your actual username
+  password: changeme-in-production # ← replace with a strong password
+
+---
+# Headless Service — gives each pod a stable DNS name:
+#   eureka-0.eureka-headless.infrastructure.svc.cluster.local
+#   eureka-1.eureka-headless.infrastructure.svc.cluster.local
+apiVersion: v1
+kind: Service
+metadata:
+  name: eureka-headless
+  namespace: infrastructure
+  labels:
+    app: eureka
+spec:
+  clusterIP: None   # Headless
+  selector:
+    app: eureka
+  ports:
+    - name: http
+      port: 8761
+      targetPort: 8761
+
+---
+# ClusterIP Service — stable endpoint for clients inside the cluster
+apiVersion: v1
+kind: Service
+metadata:
+  name: eureka
+  namespace: infrastructure
+  labels:
+    app: eureka
+spec:
+  selector:
+    app: eureka
+  ports:
+    - name: http
+      port: 8761
+      targetPort: 8761
+
+---
+# StatefulSet — 2 replicas for HA
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: eureka
+  namespace: infrastructure
+spec:
+  serviceName: eureka-headless
+  replicas: 2
+  selector:
+    matchLabels:
+      app: eureka
+  template:
+    metadata:
+      labels:
+        app: eureka
+      annotations:
+        # Prometheus scraping
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/actuator/prometheus"
+        prometheus.io/port: "8761"
+    spec:
+      # Spread pods across availability zones
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: eureka
+
+      containers:
+        - name: eureka
+          image: ghcr.io/your-org/Discovery-Server:latest  # ← update
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8761
+              name: http
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: prod
+            - name: EUREKA_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: eureka-credentials
+                  key: username
+            - name: EUREKA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: eureka-credentials
+                  key: password
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: EUREKA_HOSTNAME
+              value: "$(POD_NAME).eureka-headless.infrastructure.svc.cluster.local"
+            # Peer URLs: all pods in the StatefulSet
+            # Adjust if you change replica count
+            - name: EUREKA_PEER_URLS
+              value: >-
+                http://$(EUREKA_USERNAME):$(EUREKA_PASSWORD)@eureka-0.eureka-headless.infrastructure.svc.cluster.local:8761/eureka/,
+                http://$(EUREKA_USERNAME):$(EUREKA_PASSWORD)@eureka-1.eureka-headless.infrastructure.svc.cluster.local:8761/eureka/
+            - name: JAVA_OPTS
+              value: >-
+                -XX:+UseContainerSupport
+                -XX:MaxRAMPercentage=75.0
+                -XX:+ExitOnOutOfMemoryError
+                -Djava.security.egd=file:/dev/./urandom
+
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+
+          # Readiness probe — only route traffic when Eureka is ready
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8761
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 6
+
+          # Liveness probe — restart if the JVM is deadlocked
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8761
+            initialDelaySeconds: 120
+            periodSeconds: 20
+            failureThreshold: 3
+
+          # Startup probe — give extra time on cold start
+          startupProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8761
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 12   # 30 + 10×12 = 150s max startup
+
+          volumeMounts:
+            - name: log-storage
+              mountPath: /var/log/eureka
+
+  volumeClaimTemplates:
+    - metadata:
+        name: log-storage
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        resources:
+          requests:
+            storage: 2Gi

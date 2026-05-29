@@ -1,0 +1,72 @@
+version: "3.9"
+
+# ============================================================
+# Docker Compose — local High-Availability Discovery-Server cluster
+#
+# Starts 2 Eureka nodes that replicate with each other.
+# Useful for testing HA behaviour and peer replication locally.
+#
+# Usage:
+#   docker compose up -d
+#   Open: http://localhost:8761  (node 1)
+#         http://localhost:8762  (node 2)
+# ============================================================
+
+services:
+
+  eureka-1:
+    build: .
+    container_name: eureka-1
+    hostname: eureka-1
+    ports:
+      - "8761:8761"
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SERVER_PORT: 8761
+      EUREKA_USERNAME: eureka-admin
+      EUREKA_PASSWORD: supersecret        # ← change for real deployments
+      EUREKA_HOSTNAME: eureka-1
+      # Point to peer node
+      EUREKA_PEER_URLS: http://eureka-admin:supersecret@eureka-2:8761/eureka/
+      AVAILABILITY_ZONE: zone-a
+    networks:
+      - eureka-net
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8761/actuator/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+  eureka-2:
+    build: .
+    container_name: eureka-2
+    hostname: eureka-2
+    ports:
+      - "8762:8761"
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SERVER_PORT: 8761
+      EUREKA_USERNAME: eureka-admin
+      EUREKA_PASSWORD: supersecret        # ← change for real deployments
+      EUREKA_HOSTNAME: eureka-2
+      # Point to peer node
+      EUREKA_PEER_URLS: http://eureka-admin:supersecret@eureka-1:8761/eureka/
+      AVAILABILITY_ZONE: zone-b
+    networks:
+      - eureka-net
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8761/actuator/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+    depends_on:
+      eureka-1:
+        condition: service_healthy
+
+networks:
+  eureka-net:
+    driver: bridge

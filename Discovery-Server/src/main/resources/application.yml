@@ -1,0 +1,85 @@
+spring:
+  application:
+    name: Discovery-Server
+
+  # Security credentials — OVERRIDE these via environment variables in production:
+  #   EUREKA_SERVER_SECURITY_USERNAME
+  #   EUREKA_SERVER_SECURITY_PASSWORD
+  # Never store real passwords here!
+
+# Active profile selection — can be overridden with:
+#   --spring.profiles.active=prod
+# or environment variable: SPRING_PROFILES_ACTIVE=prod
+---
+# ======================================================
+# Base / Shared settings (all profiles inherit these)
+# ======================================================
+eureka:
+  server:
+    # Security credentials (override via env vars in production)
+    security:
+      username: ${EUREKA_USERNAME:eureka-admin}
+      password: ${EUREKA_PASSWORD:changeme-in-production}
+
+    # Peer replication batch size
+    max-threads-for-peer-replication: 20
+
+    # Interval (ms) between replication retries when peers are unreachable
+    peer-eureka-nodes-update-interval-ms: 10000
+
+    # Max time (ms) a request can wait for a peer sync
+    peer-eureka-status-refresh-time-interval-ms: 10000
+
+    # Eviction task runs every 60 seconds
+    eviction-interval-timer-in-ms: 60000
+
+    # Rate limiter settings (protect the server from thundering herd)
+    rate-limiter-enabled: true
+    rate-limiter-burst-size: 10
+    rate-limiter-registry-fetch-average-rate: 500
+    rate-limiter-full-fetch-average-rate: 100
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, metrics, prometheus, env, loggers
+  endpoint:
+    health:
+      show-details: when_authorized
+      show-components: when_authorized
+      probes:
+        enabled: true
+  info:
+    env:
+      enabled: true
+    git:
+      mode: full
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    tags:
+      application: ${spring.application.name}
+      environment: ${spring.profiles.active:default}
+
+info:
+  app:
+    name: ${spring.application.name}
+    version: '@project.version@'
+    description: Eureka Service Discovery Server
+
+server:
+  port: 9090
+
+# ---- Rate Limiter (EurekaRateLimitFilter) ----
+# eureka.server.rate-limit.enabled: true
+# eureka.server.rate-limit.max-requests-per-window: 200
+# eureka.server.rate-limit.window-seconds: 60
+
+# ---- Self-Preservation Watcher ----
+# eureka.server.self-preservation-watcher.enabled: true
+# eureka.server.self-preservation-watcher.check-interval-ms: 60000
+
+# ---- Graceful Shutdown ----
+# eureka.server.shutdown.pre-close-delay-ms: 10000  (set to 0 in dev)

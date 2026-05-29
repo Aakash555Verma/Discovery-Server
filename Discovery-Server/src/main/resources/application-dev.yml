@@ -1,0 +1,48 @@
+# ======================================================
+# DEV profile — single standalone instance
+# Run with: --spring.profiles.active=dev
+# ======================================================
+spring:
+  config:
+    activate:
+      on-profile: dev
+
+server:
+  port: 8761
+
+logging:
+  level:
+    root: INFO
+    com.netflix.eureka: DEBUG
+    com.netflix.discovery: DEBUG
+    com.discovery: DEBUG
+  pattern:
+    console: "%clr(%d{yyyy-MM-dd HH:mm:ss.SSS}){faint} %clr(%5p) %clr(${PID:- }){magenta} %clr(---){faint} %clr([%15.15t]){faint} %clr(%-40.40logger{39}){cyan} %clr(:){faint} %m%n%wEx"
+
+eureka:
+  instance:
+    hostname: localhost
+    # Prefer IP in dev (easier for Docker Compose networking)
+    prefer-ip-address: false
+
+  client:
+    # In standalone mode, this node does NOT register with itself
+    register-with-eureka: false
+    fetch-registry: false
+    service-url:
+      defaultZone: http://${eureka.server.security.username}:${eureka.server.security.password}@${eureka.instance.hostname}:${server.port}/eureka/
+
+  server:
+    # Disable self-preservation in dev (instances removed immediately after stopping)
+    enable-self-preservation: false
+    # Expire instances faster in dev
+    eviction-interval-timer-in-ms: 5000
+
+# Disable graceful shutdown delay in dev (faster restarts)
+eureka.server.shutdown.pre-close-delay-ms: 0
+
+# Rate limiter — keep enabled in dev to test it, but set a generous limit
+eureka.server.rate-limit.max-requests-per-window: 1000
+
+# Self-preservation watcher — disable in dev (no self-preservation to watch)
+eureka.server.self-preservation-watcher.enabled: false

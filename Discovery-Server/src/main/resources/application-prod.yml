@@ -1,0 +1,100 @@
+# ======================================================
+# PROD profile — High-Availability peer-aware cluster
+#
+# This config supports a 2-node (or more) Eureka cluster.
+# Each node must be deployed with its own hostname override.
+#
+# Example: 2-node HA setup
+#   Node 1: -Deureka.instance.hostname=eureka-1.internal.company.com
+#   Node 2: -Deureka.instance.hostname=eureka-2.internal.company.com
+#
+# All credentials MUST come from environment variables or a secrets manager.
+# Never commit real passwords to source control.
+#
+# Required environment variables:
+#   EUREKA_USERNAME       — Eureka Basic Auth username
+#   EUREKA_PASSWORD       — Eureka Basic Auth password
+#   EUREKA_HOSTNAME       — This node's hostname (e.g. eureka-1.internal)
+#   EUREKA_PEER_URLS      — Comma-separated peer URLs
+#                           e.g. http://user:pass@eureka-2.internal:8761/eureka/
+# ======================================================
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+server:
+  port: 8761
+  # Enable HTTP/2 and compression for production
+  http2:
+    enabled: true
+  compression:
+    enabled: true
+    min-response-size: 1024
+  # Graceful shutdown — wait for in-flight requests
+  shutdown: graceful
+  tomcat:
+    # Tune thread pool for production load
+    threads:
+      max: 200
+      min-spare: 20
+    accept-count: 100
+    connection-timeout: 5000
+    keep-alive-timeout: 15000
+
+spring.lifecycle:
+  timeout-per-shutdown-phase: 30s
+
+logging:
+  level:
+    root: WARN
+    com.netflix.eureka: INFO
+    com.netflix.discovery: INFO
+    com.discovery: INFO
+  pattern:
+    # JSON structured logging for log aggregation (ELK, Splunk, CloudWatch)
+    console: '{"timestamp":"%d{yyyy-MM-dd HH:mm:ss.SSS}","level":"%p","logger":"%logger{50}","thread":"%t","message":"%replace(%m){''\"'',''\\"''}","exception":"%replace(%wEx){''[\r\n]+'','' | ''}"}%n'
+  file:
+    name: /var/log/eureka/discovery-server.log
+
+eureka:
+  instance:
+    hostname: ${EUREKA_HOSTNAME:eureka-1.internal.example.com}
+    # Use IP address — more reliable in containerized/cloud environments
+    prefer-ip-address: false
+    # How often the client sends heartbeats (seconds)
+    lease-renewal-interval-in-seconds: 10
+    # How long before the server evicts a silent instance (seconds)
+    lease-expiration-duration-in-seconds: 30
+    # Metadata for service discovery clients
+    metadata-map:
+      zone: ${AVAILABILITY_ZONE:default}
+      region: ${AWS_REGION:us-east-1}
+
+  client:
+    # In HA mode, each Eureka node registers with its peers
+    register-with-eureka: true
+    fetch-registry: true
+    # Point to all peer Eureka nodes — this node will replicate with all of them
+    # Replace with your actual peer hostnames / DNS names
+    service-url:
+      defaultZone: ${EUREKA_PEER_URLS:http://${eureka.server.security.username}:${eureka.server.security.password}@eureka-2.internal.example.com:8761/eureka/}
+    # Refresh the registry every 30 seconds
+    registry-fetch-interval-seconds: 30
+    # Replicate changes to peers eagerly
+    eureka-server-connect-timeout-seconds: 5
+    eureka-server-read-timeout-seconds: 8
+    eureka-connection-idle-timeout-seconds: 30
+
+  server:
+    # Enable self-preservation in production — prevents mass eviction during network partitions
+    enable-self-preservation: true
+    # % of instances that must be renewing heartbeats before self-preservation kicks in
+    renewal-percent-threshold: 0.85
+    # How often to recalculate the renewal threshold (ms)
+    renewal-threshold-update-interval-ms: 900000  # 15 minutes
+    # Allow traffic only after warming up (ms)
+    wait-time-in-ms-when-sync-empty: 300000       # 5 minutes
+    # Peer replication retry attempts
+    number-of-replication-retries: 5
+    max-time-for-replication: 30000
